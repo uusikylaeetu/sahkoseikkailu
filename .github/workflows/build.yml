@@ -1,0 +1,99 @@
+name: Build Releases
+
+on:
+  push:
+    tags:
+      - "v*"          # Laukeaa kun teet git tag v1.0 ja push --tags
+  workflow_dispatch:  # Mahdollistaa manuaalisen käynnistyksen GitHubin UI:sta
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Sahkoseikkailu.exe
+            pyinstaller_args: --onefile --windowed --name Sahkoseikkailu
+          - os: macos-latest
+            artifact: Sahkoseikkailu.dmg
+            pyinstaller_args: --onefile --windowed --name Sahkoseikkailu
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Lataa lähdekoodi
+        uses: actions/checkout@v4
+
+      - name: Asenna Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Asenna PyInstaller
+        run: pip install pyinstaller
+
+      - name: Käännä suoritettavaksi tiedostoksi
+        run: pyinstaller ${{ matrix.pyinstaller_args }} sahkoseikkailu.py
+
+      # --- macOS: pakkaa .app → .dmg ---
+      - name: Pakkaa macOS .dmg
+        if: runner.os == 'macOS'
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "Sahkoseikkailu" \
+            --window-size 400 200 \
+            --icon-size 100 \
+            --app-drop-link 300 100 \
+            "Sahkoseikkailu.dmg" \
+            "dist/Sahkoseikkailu.app"
+
+      # --- Windows: nimeä tiedosto oikein ---
+      - name: Nimeä Windows .exe
+        if: runner.os == 'Windows'
+        run: copy dist\Sahkoseikkailu.exe Sahkoseikkailu.exe
+        shell: cmd
+
+      - name: Lataa artifact tallennukseen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write   # Tarvitaan GitHub Release -julkaisuun
+
+    steps:
+      - name: Lataa Windows-artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Sahkoseikkailu.exe
+
+      - name: Lataa macOS-artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Sahkoseikkailu.dmg
+
+      - name: Luo GitHub Release ja liitä tiedostot
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Sähköseikkailu ${{ github.ref_name }}"
+          body: |
+            ## Latausohjeet
+
+            | Käyttöjärjestelmä | Tiedosto |
+            |---|---|
+            | Windows 10/11 | `Sahkoseikkailu.exe` — lataa ja tuplaklikkaa |
+            | macOS | `Sahkoseikkailu.dmg` — avaa ja vedä Sovellukset-kansioon |
+
+            Ei vaadi Pythonin asennusta.
+          files: |
+            Sahkoseikkailu.exe
+            Sahkoseikkailu.dmg
+          draft: false
+          prerelease: false
